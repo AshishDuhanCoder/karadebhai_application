@@ -82,14 +82,17 @@ export function ReportForm() {
     setValidationMessage(null)
 
     try {
-      console.log("[v0] Starting AI image validation for category:", category)
+      console.log("[v0] Client: Starting AI image validation for category:", category)
+      console.log("[v0] Client: Image base64 length:", imageBase64.length)
 
       const result = await validateImageWithAI(imageBase64, category)
+
+      console.log("[v0] Client: Received result:", result)
 
       if (!result.success) {
         setValidationMessage({
           type: "error",
-          text: "Could not validate image. You can still submit.",
+          text: `Could not validate image: ${result.error || "Unknown error"}. You can still submit.`,
         })
         return
       }
@@ -111,10 +114,11 @@ export function ReportForm() {
         })
       }
     } catch (error) {
-      console.error("[v0] Error validating image:", error)
+      console.error("[v0] Client: Error validating image:", error)
+      console.error("[v0] Client: Error details:", error instanceof Error ? error.message : String(error))
       setValidationMessage({
         type: "error",
-        text: "Could not validate image. You can still submit.",
+        text: `Error: ${error instanceof Error ? error.message : "Unknown error"}. You can still submit.`,
       })
     } finally {
       setIsValidatingImage(false)

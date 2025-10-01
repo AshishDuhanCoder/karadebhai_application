@@ -4,9 +4,10 @@ import { generateText } from "ai"
 
 export async function validateImageWithAI(imageBase64: string, category: string) {
   try {
-    console.log("[v0] Validating image for category:", category)
+    console.log("[v0] Starting validation for category:", category)
+    console.log("[v0] Image data length:", imageBase64.length)
+    console.log("[v0] Image starts with:", imageBase64.substring(0, 50))
 
-    // Category descriptions for better matching
     const categoryDescriptions: Record<string, string> = {
       pothole: "a pothole, damaged road, cracked pavement, or road defect",
       garbage: "garbage, litter, trash, waste, or scattered rubbish",
@@ -17,6 +18,8 @@ export async function validateImageWithAI(imageBase64: string, category: string)
     }
 
     const categoryDesc = categoryDescriptions[category] || category
+
+    console.log("[v0] Calling AI model...")
 
     const { text } = await generateText({
       model: "openai/gpt-4o-mini",
@@ -46,18 +49,23 @@ Respond with only one word: MATCH, PARTIAL, or NOMATCH`,
       ],
     })
 
+    console.log("[v0] AI response received:", text)
+
     const result = text.trim().toUpperCase()
-    console.log("[v0] AI validation result:", result)
+    console.log("[v0] Parsed result:", result)
 
     return {
       success: true,
       result: result as "MATCH" | "PARTIAL" | "NOMATCH",
     }
   } catch (error) {
-    console.error("[v0] Error in AI validation:", error)
+    console.error("[v0] Full error object:", error)
+    console.error("[v0] Error message:", error instanceof Error ? error.message : String(error))
+    console.error("[v0] Error stack:", error instanceof Error ? error.stack : "No stack trace")
+
     return {
       success: false,
-      error: "Failed to validate image",
+      error: error instanceof Error ? error.message : "Failed to validate image",
     }
   }
 }
