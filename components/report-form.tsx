@@ -9,6 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
+import { validateImageWithAI } from "@/app/actions/validate-image"
 
 export function ReportForm() {
   const [isSubmitted, setIsSubmitted] = useState(false)
@@ -71,7 +72,7 @@ export function ReportForm() {
     )
   }
 
-  const validateImageWithAI = async (file: File, category: string) => {
+  const validateImage = async (imageBase64: string, category: string) => {
     if (!category) {
       setValidationMessage({ type: "warning", text: "Please select a category first" })
       return
@@ -81,133 +82,42 @@ export function ReportForm() {
     setValidationMessage(null)
 
     try {
-      // Convert file to base64
-      const reader = new FileReader()
-      reader.readAsDataURL(file)
+      console.log("[v0] Starting AI image validation for category:", category)
 
-      reader.onload = async () => {
-        try {
-          console.log("[v0] Starting image validation for category:", category)
+      const result = await validateImageWithAI(imageBase64, category)
 
-          // Convert base64 to blob for API
-          const base64Data = (reader.result as string).split(",")[1]
-          const byteCharacters = atob(base64Data)
-          const byteNumbers = new Array(byteCharacters.length)
-          for (let i = 0; i < byteCharacters.length; i++) {
-            byteNumbers[i] = byteCharacters.charCodeAt(i)
-          }
-          const byteArray = new Uint8Array(byteNumbers)
-          const blob = new Blob([byteArray], { type: file.type })
-
-          // Try Hugging Face API with proper format
-          const response = await fetch("https://api-inference.huggingface.co/models/google/vit-base-patch16-224", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/octet-stream",
-            },
-            body: blob,
-          })
-
-          console.log("[v0] API Response status:", response.status)
-
-          if (!response.ok) {
-            console.log("[v0] API Error:", await response.text())
-            throw new Error(`API returned ${response.status}`)
-          }
-
-          const result = await response.json()
-          console.log("[v0] AI Classification Result:", result)
-
-          // Enhanced category keywords with more variations
-          const categoryKeywords: Record<string, string[]> = {
-            pothole: [
-              "road",
-              "street",
-              "pavement",
-              "asphalt",
-              "crack",
-              "hole",
-              "highway",
-              "path",
-              "sidewalk",
-              "concrete",
-            ],
-            garbage: ["garbage", "trash", "litter", "waste", "rubbish", "bin", "bag", "plastic", "bottle", "can"],
-            streetlight: ["light", "lamp", "pole", "electric", "wire", "cable", "bulb", "street", "traffic", "signal"],
-            sewageissue: ["water", "drain", "pipe", "sewer", "manhole", "gutter", "drainage", "canal"],
-            stagnantwater: ["water", "puddle", "pond", "pool", "flood", "lake", "rain", "wet"],
-            constructiondebris: [
-              "construction",
-              "debris",
-              "rubble",
-              "concrete",
-              "brick",
-              "building",
-              "wall",
-              "structure",
-            ],
-          }
-
-          const keywords = categoryKeywords[category] || []
-
-          // Check if result is an array
-          if (!Array.isArray(result)) {
-            console.log("[v0] Unexpected result format:", result)
-            throw new Error("Unexpected API response format")
-          }
-
-          const topPredictions = result.slice(0, 10) // Check more predictions
-          console.log("[v0] Top predictions:", topPredictions)
-
-          // More lenient matching - check if any keyword appears in any prediction
-          const isRelevant = topPredictions.some((pred: { label: string; score: number }) => {
-            const label = pred.label.toLowerCase()
-            const matches = keywords.some((keyword) => label.includes(keyword))
-            if (matches) {
-              console.log("[v0] Match found:", label, "with score:", pred.score)
-            }
-            return matches
-          })
-
-          if (isRelevant) {
-            setValidationMessage({
-              type: "success",
-              text: "✓ Image matches the selected category",
-            })
-          } else {
-            // Show what was detected to help user understand
-            const topLabel = topPredictions[0]?.label || "unknown"
-            setValidationMessage({
-              type: "warning",
-              text: `⚠ Image detected as "${topLabel}". Please verify it matches "${category}" or upload a different photo.`,
-            })
-          }
-        } catch (error) {
-          console.error("[v0] Error validating image:", error)
-          setValidationMessage({
-            type: "error",
-            text: "Could not validate image. You can still submit.",
-          })
-        } finally {
-          setIsValidatingImage(false)
-        }
-      }
-
-      reader.onerror = () => {
-        console.error("[v0] Error reading file")
-        setIsValidatingImage(false)
+      if (!result.success) {
         setValidationMessage({
           type: "error",
-          text: "Error reading image file",
+          text: "Could not validate image. You can still submit.",
+        })
+        return
+      }
+
+      if (result.result === "MATCH") {
+        setValidationMessage({
+          type: "success",
+          text: "✓ Image matches the selected category perfectly!",
+        })
+      } else if (result.result === "PARTIAL") {
+        setValidationMessage({
+          type: "warning",
+          text: "⚠ Image might be related but unclear. Please verify or upload a clearer photo.",
+        })
+      } else {
+        setValidationMessage({
+          type: "warning",
+          text: `⚠ Image doesn't clearly show "${category}". Please upload a relevant photo or change category.`,
         })
       }
     } catch (error) {
-      console.error("[v0] Error processing image:", error)
-      setIsValidatingImage(false)
+      console.error("[v0] Error validating image:", error)
       setValidationMessage({
         type: "error",
-        text: "Error processing image",
+        text: "Could not validate image. You can still submit.",
       })
+    } finally {
+      setIsValidatingImage(false)
     }
   }
 
@@ -217,8 +127,9 @@ export function ReportForm() {
       setImageFile(file)
       const reader = new FileReader()
       reader.onload = () => {
-        setUploadedImage(reader.result as string)
-        validateImageWithAI(file, selectedCategory)
+        const base64 = reader.result as string
+        setUploadedImage(base64)
+        validateImage(base64, selectedCategory)
       }
       reader.readAsDataURL(file)
     }
@@ -230,8 +141,9 @@ export function ReportForm() {
       setImageFile(file)
       const reader = new FileReader()
       reader.onload = () => {
-        setUploadedImage(reader.result as string)
-        validateImageWithAI(file, selectedCategory)
+        const base64 = reader.result as string
+        setUploadedImage(base64)
+        validateImage(base64, selectedCategory)
       }
       reader.readAsDataURL(file)
     }
