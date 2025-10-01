@@ -2,8 +2,8 @@
 
 import type React from "react"
 
-import { useState } from "react"
-import { Upload, MapPin, Send, CheckCircle } from "lucide-react"
+import { useState, useRef } from "react"
+import { MapPin, Send, CheckCircle, Camera, ImageIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
@@ -16,6 +16,16 @@ export function ReportForm() {
   const [locationDetected, setLocationDetected] = useState(false)
   const [location, setLocation] = useState("")
   const [coordinates, setCoordinates] = useState<{ lat: number; lng: number } | null>(null)
+  const [selectedCategory, setSelectedCategory] = useState("")
+  const [uploadedImage, setUploadedImage] = useState<string | null>(null)
+  const [imageFile, setImageFile] = useState<File | null>(null)
+  const [isValidatingImage, setIsValidatingImage] = useState(false)
+  const [validationMessage, setValidationMessage] = useState<{
+    type: "success" | "warning" | "error"
+    text: string
+  } | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const cameraInputRef = useRef<HTMLInputElement>(null)
 
   const handleLocationDetect = () => {
     setIsLoading(true)
@@ -59,6 +69,107 @@ export function ReportForm() {
         setIsLoading(false)
       },
     )
+  }
+
+  const validateImageWithAI = async (file: File, category: string) => {
+    if (!category) {
+      setValidationMessage({ type: "warning", text: "Please select a category first" })
+      return
+    }
+
+    setIsValidatingImage(true)
+    setValidationMessage(null)
+
+    try {
+      const reader = new FileReader()
+      reader.readAsDataURL(file)
+
+      reader.onload = async () => {
+        try {
+          const response = await fetch("https://api-inference.huggingface.co/models/google/vit-base-patch16-224", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              inputs: reader.result,
+            }),
+          })
+
+          const result = await response.json()
+          console.log("[v0] AI Classification Result:", result)
+
+          const categoryKeywords: Record<string, string[]> = {
+            pothole: ["road", "street", "pavement", "asphalt", "crack", "hole"],
+            garbage: ["garbage", "trash", "litter", "waste", "rubbish", "bin", "bag"],
+            streetlight: ["light", "lamp", "pole", "electric", "wire", "cable", "bulb"],
+            sewageissue: ["water", "drain", "pipe", "sewer", "manhole", "gutter"],
+            stagnantwater: ["water", "puddle", "pond", "pool", "flood"],
+            constructiondebris: ["construction", "debris", "rubble", "concrete", "brick", "building"],
+          }
+
+          const keywords = categoryKeywords[category] || []
+          const topPredictions = result.slice(0, 5)
+
+          const isRelevant = topPredictions.some((pred: { label: string }) =>
+            keywords.some((keyword) => pred.label.toLowerCase().includes(keyword)),
+          )
+
+          if (isRelevant) {
+            setValidationMessage({
+              type: "success",
+              text: "✓ Image matches the selected category",
+            })
+          } else {
+            setValidationMessage({
+              type: "warning",
+              text: "⚠ Image may not match the category. Please verify or upload a different photo.",
+            })
+          }
+        } catch (error) {
+          console.error("[v0] Error validating image:", error)
+          setValidationMessage({
+            type: "error",
+            text: "Could not validate image. You can still submit.",
+          })
+        } finally {
+          setIsValidatingImage(false)
+        }
+      }
+    } catch (error) {
+      console.error("[v0] Error processing image:", error)
+      setIsValidatingImage(false)
+      setValidationMessage({
+        type: "error",
+        text: "Error processing image",
+      })
+    }
+  }
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (file) {
+      setImageFile(file)
+      const reader = new FileReader()
+      reader.onload = () => {
+        setUploadedImage(reader.result as string)
+        validateImageWithAI(file, selectedCategory)
+      }
+      reader.readAsDataURL(file)
+    }
+  }
+
+  const handleCameraCapture = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (file) {
+      setImageFile(file)
+      const reader = new FileReader()
+      reader.onload = () => {
+        setUploadedImage(reader.result as string)
+        validateImageWithAI(file, selectedCategory)
+      }
+      reader.readAsDataURL(file)
+    }
   }
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -109,7 +220,7 @@ export function ReportForm() {
         <form onSubmit={handleSubmit} className="space-y-6">
           <div className="space-y-2">
             <Label htmlFor="category">Issue Category</Label>
-            <Select required>
+            <Select required value={selectedCategory} onValueChange={setSelectedCategory}>
               <SelectTrigger>
                 <SelectValue placeholder="Select a category..." />
               </SelectTrigger>
@@ -126,10 +237,73 @@ export function ReportForm() {
 
           <div className="space-y-2">
             <Label>Upload Photo</Label>
-            <div className="border-2 border-dashed border-border rounded-lg p-8 text-center hover:border-primary/50 transition-colors cursor-pointer">
-              <Upload className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
-              <p className="text-sm text-muted-foreground">Tap or Drag to Upload Image</p>
-            </div>
+            {uploadedImage ? (
+              <div className="space-y-3">
+                <div className="relative rounded-lg overflow-hidden border-2 border-border">
+                  <img src={uploadedImage || "/placeholder.svg"} alt="Uploaded" className="w-full h-48 object-cover" />
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    size="sm"
+                    className="absolute top-2 right-2"
+                    onClick={() => {
+                      setUploadedImage(null)
+                      setImageFile(null)
+                      setValidationMessage(null)
+                    }}
+                  >
+                    Remove
+                  </Button>
+                </div>
+                {isValidatingImage && (
+                  <p className="text-sm text-muted-foreground text-center">🔍 Validating image with AI...</p>
+                )}
+                {validationMessage && (
+                  <div
+                    className={`p-3 rounded-lg text-sm ${
+                      validationMessage.type === "success"
+                        ? "bg-green-50 text-green-700 border border-green-200"
+                        : validationMessage.type === "warning"
+                          ? "bg-yellow-50 text-yellow-700 border border-yellow-200"
+                          : "bg-red-50 text-red-700 border border-red-200"
+                    }`}
+                  >
+                    {validationMessage.text}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-3">
+                <input
+                  ref={cameraInputRef}
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  onChange={handleCameraCapture}
+                  className="hidden"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-24 flex flex-col items-center justify-center gap-2 bg-transparent"
+                  onClick={() => cameraInputRef.current?.click()}
+                >
+                  <Camera className="w-6 h-6" />
+                  <span className="text-xs">Take Photo</span>
+                </Button>
+
+                <input ref={fileInputRef} type="file" accept="image/*" onChange={handleFileUpload} className="hidden" />
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-24 flex flex-col items-center justify-center gap-2 bg-transparent"
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  <ImageIcon className="w-6 h-6" />
+                  <span className="text-xs">Upload Image</span>
+                </Button>
+              </div>
+            )}
           </div>
 
           <div className="space-y-2">
