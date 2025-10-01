@@ -81,39 +81,93 @@ export function ReportForm() {
     setValidationMessage(null)
 
     try {
+      // Convert file to base64
       const reader = new FileReader()
       reader.readAsDataURL(file)
 
       reader.onload = async () => {
         try {
+          console.log("[v0] Starting image validation for category:", category)
+
+          // Convert base64 to blob for API
+          const base64Data = (reader.result as string).split(",")[1]
+          const byteCharacters = atob(base64Data)
+          const byteNumbers = new Array(byteCharacters.length)
+          for (let i = 0; i < byteCharacters.length; i++) {
+            byteNumbers[i] = byteCharacters.charCodeAt(i)
+          }
+          const byteArray = new Uint8Array(byteNumbers)
+          const blob = new Blob([byteArray], { type: file.type })
+
+          // Try Hugging Face API with proper format
           const response = await fetch("https://api-inference.huggingface.co/models/google/vit-base-patch16-224", {
             method: "POST",
             headers: {
-              "Content-Type": "application/json",
+              "Content-Type": "application/octet-stream",
             },
-            body: JSON.stringify({
-              inputs: reader.result,
-            }),
+            body: blob,
           })
+
+          console.log("[v0] API Response status:", response.status)
+
+          if (!response.ok) {
+            console.log("[v0] API Error:", await response.text())
+            throw new Error(`API returned ${response.status}`)
+          }
 
           const result = await response.json()
           console.log("[v0] AI Classification Result:", result)
 
+          // Enhanced category keywords with more variations
           const categoryKeywords: Record<string, string[]> = {
-            pothole: ["road", "street", "pavement", "asphalt", "crack", "hole"],
-            garbage: ["garbage", "trash", "litter", "waste", "rubbish", "bin", "bag"],
-            streetlight: ["light", "lamp", "pole", "electric", "wire", "cable", "bulb"],
-            sewageissue: ["water", "drain", "pipe", "sewer", "manhole", "gutter"],
-            stagnantwater: ["water", "puddle", "pond", "pool", "flood"],
-            constructiondebris: ["construction", "debris", "rubble", "concrete", "brick", "building"],
+            pothole: [
+              "road",
+              "street",
+              "pavement",
+              "asphalt",
+              "crack",
+              "hole",
+              "highway",
+              "path",
+              "sidewalk",
+              "concrete",
+            ],
+            garbage: ["garbage", "trash", "litter", "waste", "rubbish", "bin", "bag", "plastic", "bottle", "can"],
+            streetlight: ["light", "lamp", "pole", "electric", "wire", "cable", "bulb", "street", "traffic", "signal"],
+            sewageissue: ["water", "drain", "pipe", "sewer", "manhole", "gutter", "drainage", "canal"],
+            stagnantwater: ["water", "puddle", "pond", "pool", "flood", "lake", "rain", "wet"],
+            constructiondebris: [
+              "construction",
+              "debris",
+              "rubble",
+              "concrete",
+              "brick",
+              "building",
+              "wall",
+              "structure",
+            ],
           }
 
           const keywords = categoryKeywords[category] || []
-          const topPredictions = result.slice(0, 5)
 
-          const isRelevant = topPredictions.some((pred: { label: string }) =>
-            keywords.some((keyword) => pred.label.toLowerCase().includes(keyword)),
-          )
+          // Check if result is an array
+          if (!Array.isArray(result)) {
+            console.log("[v0] Unexpected result format:", result)
+            throw new Error("Unexpected API response format")
+          }
+
+          const topPredictions = result.slice(0, 10) // Check more predictions
+          console.log("[v0] Top predictions:", topPredictions)
+
+          // More lenient matching - check if any keyword appears in any prediction
+          const isRelevant = topPredictions.some((pred: { label: string; score: number }) => {
+            const label = pred.label.toLowerCase()
+            const matches = keywords.some((keyword) => label.includes(keyword))
+            if (matches) {
+              console.log("[v0] Match found:", label, "with score:", pred.score)
+            }
+            return matches
+          })
 
           if (isRelevant) {
             setValidationMessage({
@@ -121,9 +175,11 @@ export function ReportForm() {
               text: "✓ Image matches the selected category",
             })
           } else {
+            // Show what was detected to help user understand
+            const topLabel = topPredictions[0]?.label || "unknown"
             setValidationMessage({
               type: "warning",
-              text: "⚠ Image may not match the category. Please verify or upload a different photo.",
+              text: `⚠ Image detected as "${topLabel}". Please verify it matches "${category}" or upload a different photo.`,
             })
           }
         } catch (error) {
@@ -135,6 +191,15 @@ export function ReportForm() {
         } finally {
           setIsValidatingImage(false)
         }
+      }
+
+      reader.onerror = () => {
+        console.error("[v0] Error reading file")
+        setIsValidatingImage(false)
+        setValidationMessage({
+          type: "error",
+          text: "Error reading image file",
+        })
       }
     } catch (error) {
       console.error("[v0] Error processing image:", error)
