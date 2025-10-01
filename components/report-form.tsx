@@ -9,7 +9,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
-import { validateImageWithAI } from "@/app/actions/validate-image"
 
 export function ReportForm() {
   const [isSubmitted, setIsSubmitted] = useState(false)
@@ -82,43 +81,52 @@ export function ReportForm() {
     setValidationMessage(null)
 
     try {
-      console.log("[v0] Client: Starting AI image validation for category:", category)
-      console.log("[v0] Client: Image base64 length:", imageBase64.length)
+      console.log("[v0] Client: Starting Python CV validation for category:", category)
 
-      const result = await validateImageWithAI(imageBase64, category)
+      const response = await fetch("/api/validate-image", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          imageData: imageBase64,
+          category: category,
+        }),
+      })
+
+      const result = await response.json()
 
       console.log("[v0] Client: Received result:", result)
 
       if (!result.success) {
         setValidationMessage({
           type: "error",
-          text: `Could not validate image: ${result.error || "Unknown error"}. You can still submit.`,
+          text: result.message || "Could not validate image. You can still submit.",
         })
         return
       }
 
-      if (result.result === "MATCH") {
+      if (result.status === "MATCH") {
         setValidationMessage({
           type: "success",
-          text: "✓ Image matches the selected category perfectly!",
+          text: `✓ Image matches ${category}! (${result.confidence}% confidence)`,
         })
-      } else if (result.result === "PARTIAL") {
+      } else if (result.status === "PARTIAL") {
         setValidationMessage({
           type: "warning",
-          text: "⚠ Image might be related but unclear. Please verify or upload a clearer photo.",
+          text: `⚠ ${result.message} (${result.confidence}% confidence)`,
         })
       } else {
         setValidationMessage({
           type: "warning",
-          text: `⚠ Image doesn't clearly show "${category}". Please upload a relevant photo or change category.`,
+          text: `⚠ ${result.message} (${result.confidence}% confidence)`,
         })
       }
     } catch (error) {
       console.error("[v0] Client: Error validating image:", error)
-      console.error("[v0] Client: Error details:", error instanceof Error ? error.message : String(error))
       setValidationMessage({
         type: "error",
-        text: `Error: ${error instanceof Error ? error.message : "Unknown error"}. You can still submit.`,
+        text: "Error analyzing image. You can still submit.",
       })
     } finally {
       setIsValidatingImage(false)
